@@ -3,8 +3,11 @@ name = "useless-classes"
 version = "1.0.0"
 description = "Useless classes to prototype your code"
 readme = "README.md"
+authors = [{name = "Pau Figueras", email = "git@pswsm.cat"}]
 requires-python = ">=3.10"
 dependencies = []
+[project.urls]
+Repository = "https://github.com/pswsm/useless-classes"
 
 [build-system]
 requires = ["uv_build>=0.8.13,<0.9.0"]
