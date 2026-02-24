@@ -1,0 +1,92 @@
+stages:
+  - test
+  - bump-version
+  - release
+
+# Run tests on ALL branches/MRs, version bump ONLY on main merges
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+test:
+  stage: test
+  image: ghcr.io/astral-sh/uv:latest
+  before_script:
+    - uv sync --frozen --all-extras # Install dependencies
+  script:
+    - uv run pytest tests/ -v --cov=src --cov-report=xml
+    - uv run pytest tests/ --doctest-modules src/
+  rules:
+    # Run tests on all MRs and main branch
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-uv-cache"
+    paths:
+      - .uv/
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+    expire_in: 1 week
+
+bump-version:
+  stage: bump-version
+  image: ghcr.io/astral-sh/uv:latest
+  before_script:
+    - uv cache clean --all
+  script:
+    - |
+      # Determine bump type based on original MR source branch name
+      if [[ $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ ^(feat|feature)/ ]]; then
+          BUMP_TYPE="minor"
+          echo "Feature branch detected - bumping minor version"
+      elif [[ $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ ^(refactor)/ ]]; then
+          BUMP_TYPE="minor"
+          echo "Refactor branch detected - bumping minor version"
+      elif [[ $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ ^(fix)/ ]]; then
+          BUMP_TYPE="patch"
+          echo "Fix branch detected - bumping patch version"
+      else
+          echo "Unknown branch convention: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME - defaulting to patch"
+          BUMP_TYPE="patch"
+      fi
+
+      # Bump version using uv
+      uv version bump --$BUMP_TYPE pyproject.toml
+
+      # Commit and push the version bump
+      git config --global user.email "ci@gitlab.com"
+      git config --global user.name "GitLab CI"
+      git add pyproject.toml
+      git commit -m "ci: bump version to \$(uv version get pyproject.toml) [$BUMP_TYPE]"
+      git push origin HEAD:main
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  artifacts:
+    reports:
+      dotenv: version.env
+    paths:
+      - pyproject.toml
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+
+create-release:
+  stage: release
+  image: alpine/git:latest
+  script:
+    - apk add --no-cache git curl jq
+    - |
+      NEW_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+      git tag "v$NEW_VERSION"
+      git push origin "v$NEW_VERSION"
+      echo "Tagged release v$NEW_VERSION"
+  needs: ["bump-version"]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
